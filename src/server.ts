@@ -12,7 +12,7 @@ export function createServer(): McpServer {
   });
 
   // Add a goal resource that allows storing and retrieving goals
-  const goals: { [key: string]: string } = {};
+  const goals = new Map<string, string>();
   
   server.tool(
     "add-goal",
@@ -21,7 +21,7 @@ export function createServer(): McpServer {
       description: z.string(),
     },
     async ({ id, description }) => {
-      goals[id] = description;
+      goals.set(id, description);
       return {
         content: [
           {
@@ -41,7 +41,7 @@ export function createServer(): McpServer {
       contents: [
         {
           uri: uri.href,
-          text: Object.entries(goals)
+          text: Array.from(goals.entries())
             .map(([id, desc]) => `${id}: ${desc}`)
             .join("\n"),
         },
@@ -53,8 +53,9 @@ export function createServer(): McpServer {
   server.resource(
     "goal",
     new ResourceTemplate("goals://{id}", { list: undefined }),
-    async (uri, { id }) => {
-      const goal = goals[id];
+    async (uri, variables) => {
+      const id = variables.id as string;
+      const goal = goals.get(id);
       if (!goal) {
         throw new Error(`Goal "${id}" not found`);
       }
