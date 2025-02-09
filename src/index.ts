@@ -1,12 +1,16 @@
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { createServer } from "./server.js";
+import { WorkspaceManager } from "./workspace.js";
 
 async function main() {
-  const server = createServer();
+  const workspaceManager = new WorkspaceManager();
+  workspaceManager.init();
+
+  const server = createServer(workspaceManager);
   const transport = new StdioServerTransport();
-  
+
   console.error("Starting Goals MCP Server...");
-  
+
   try {
     await server.connect(transport);
     console.error("Server connected successfully");

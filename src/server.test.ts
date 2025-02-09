@@ -5,111 +5,101 @@ import {
   CallToolResultSchema,
   ReadResourceResultSchema,
 } from "@modelcontextprotocol/sdk/types";
+import { rm } from "fs/promises";
+import { join } from "path";
+import { homedir } from "os";
+import { WorkspaceManager } from "./workspace";
 
 describe("Goals MCP Server", () => {
-  it("should support the complete goals workflow", async () => {
-    // Create server and client
-    const server = createServer();
+  const TEST_DIR = join(homedir(), ".goals-TEST");
+
+  beforeEach(async () => {
+    try {
+      await rm(TEST_DIR, { recursive: true, force: true });
+    } catch (error) {
+      // Ignore if directory doesn't exist
+    }
+  });
+
+  it("should support the complete workspace workflow", async () => {
+    const workspaceManager = new WorkspaceManager(TEST_DIR);
+    await workspaceManager.init();
+
+    const server = createServer(workspaceManager);
     const client = new Client(
       { name: "test-client", version: "1.0" },
       { capabilities: { tools: {}, resources: {} } },
     );
 
-    // Create and link the transports
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();
-
-    // Connect both ends
     await Promise.all([
       client.connect(clientTransport),
       server.connect(serverTransport),
     ]);
 
-    // 1. Add a goal
-    const addResult = await client.request(
+    // 1. Create a workspace
+    const createResult = await client.request(
       {
         method: "tools/call",
         params: {
-          name: "add-goal",
+          name: "create-workspace",
           arguments: {
-            id: "goal1",
-            description: "My first goal",
+            name: "test-workspace",
+            path: "/test/path",
           },
         },
       },
       CallToolResultSchema,
     );
 
-    expect(addResult.content[0]).toEqual({
+    expect(createResult.content[0]).toEqual({
       type: "text",
-      text: 'Goal "goal1" added successfully',
+      text: 'Workspace "test-workspace" created successfully',
     });
 
-    // 2. List all goals
+    // 2. List workspaces
     const listResult = await client.request(
       {
         method: "resources/read",
         params: {
-          uri: "goals://list",
+          uri: "workspaces://list",
         },
       },
       ReadResourceResultSchema,
     );
 
-    expect(listResult.contents[0].text).toContain("goal1: My first goal");
+    expect(listResult.contents[0].text).toContain("test-workspace: /test/path");
 
-    // 3. Get specific goal
-    const getResult = await client.request(
+    // 3. Initialize workspace
+    const initResult = await client.request(
       {
-        method: "resources/read",
+        method: "tools/call",
         params: {
-          uri: "goals://goal1",
-        },
-      },
-      ReadResourceResultSchema,
-    );
-
-    expect(getResult.contents[0].text).toBe("My first goal");
-
-    // Clean up
-    await client.close();
-    await server.close();
-  });
-
-  it("should handle non-existent goals", async () => {
-    const server = createServer();
-    const client = new Client(
-      { name: "test-client", version: "1.0" },
-      { capabilities: { resources: {} } },
-    );
-
-    const [clientTransport, serverTransport] =
-      InMemoryTransport.createLinkedPair();
-    await Promise.all([
-      client.connect(clientTransport),
-      server.connect(serverTransport),
-    ]);
-
-    // Try to get a non-existent goal
-    await expect(
-      client.request(
-        {
-          method: "resources/read",
-          params: {
-            uri: "goals://nonexistent",
+          name: "init-workspace",
+          arguments: {
+            name: "test-workspace",
           },
         },
-        ReadResourceResultSchema,
-      ),
-    ).rejects.toThrow('Goal "nonexistent" not found');
+      },
+      CallToolResultSchema,
+    );
+
+    expect(initResult.content[0]).toEqual({
+      type: "text",
+      text: 'Workspace "test-workspace" initialized',
+    });
 
     await client.close();
     await server.close();
   });
 
-  it("should persist goals across server restarts", async () => {
+  it("should persist workspaces across server restarts", async () => {
+    const workspaceManager1 = new WorkspaceManager(TEST_DIR);
+    await workspaceManager1.init();
+
     // First server instance
-    const server1 = createServer();
+    const server1 = createServer(workspaceManager1);
     const client1 = new Client(
       { name: "test-client", version: "1.0" },
       { capabilities: { tools: {}, resources: {} } },
@@ -122,27 +112,28 @@ describe("Goals MCP Server", () => {
       server1.connect(serverTransport1),
     ]);
 
-    // Add a goal
+    // Create workspace
     await client1.request(
       {
         method: "tools/call",
         params: {
-          name: "add-goal",
+          name: "create-workspace",
           arguments: {
-            id: "persistent-goal",
-            description: "This goal should persist",
+            name: "persistent-workspace",
+            path: "/persistent/path",
           },
         },
       },
       CallToolResultSchema,
     );
 
-    // Clean up first server
     await client1.close();
     await server1.close();
 
     // Create new server instance
-    const server2 = createServer();
+    const workspaceManager2 = new WorkspaceManager(TEST_DIR);
+    await workspaceManager2.init();
+    const server2 = createServer(workspaceManager2);
     const client2 = new Client(
       { name: "test-client", version: "1.0" },
       { capabilities: { tools: {}, resources: {} } },
@@ -155,18 +146,20 @@ describe("Goals MCP Server", () => {
       server2.connect(serverTransport2),
     ]);
 
-    // Verify goal still exists
-    const getResult = await client2.request(
+    // Verify workspace still exists
+    const listResult = await client2.request(
       {
         method: "resources/read",
         params: {
-          uri: "goals://persistent-goal",
+          uri: "workspaces://list",
         },
       },
       ReadResourceResultSchema,
     );
 
-    expect(getResult.contents[0].text).toBe("This goal should persist");
+    expect(listResult.contents[0].text).toContain(
+      "persistent-workspace: /persistent/path",
+    );
 
     await client2.close();
     await server2.close();

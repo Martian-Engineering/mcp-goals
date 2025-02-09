@@ -1,74 +1,68 @@
-import { McpServer, ResourceTemplate } from "@modelcontextprotocol/sdk/server/mcp.js";
+import {
+  McpServer,
+  ResourceTemplate,
+} from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
+import { WorkspaceManager } from "./workspace.js";
 
-/**
- * Creates and configures an MCP server instance
- * @returns Configured MCP server instance
- */
-export function createServer(): McpServer {
+export function createServer(workspaceManager: WorkspaceManager): McpServer {
   const server = new McpServer({
     name: "Goals MCP Server",
     version: "1.0.0",
+    capabilities: {
+      tools: {},
+      resources: {},
+    },
   });
 
-  // Add a goal resource that allows storing and retrieving goals
-  const goals = new Map<string, string>();
-  
   server.tool(
-    "add-goal",
+    "create-workspace",
     {
-      id: z.string(),
-      description: z.string(),
+      name: z.string(),
+      path: z.string(),
     },
-    async ({ id, description }) => {
-      goals.set(id, description);
+    async ({ name, path }) => {
+      const workspace = await workspaceManager.createWorkspace(name, path);
       return {
         content: [
           {
             type: "text",
-            text: `Goal "${id}" added successfully`,
+            text: `Workspace "${workspace.name}" created successfully`,
           },
         ],
       };
-    }
+    },
   );
 
-  // Add a resource to list all goals
-  server.resource(
-    "goals",
-    "goals://list",
-    async (uri) => ({
-      contents: [
-        {
-          uri: uri.href,
-          text: Array.from(goals.entries())
-            .map(([id, desc]) => `${id}: ${desc}`)
-            .join("\n"),
-        },
-      ],
-    })
-  );
-
-  // Add a resource to get a specific goal
-  server.resource(
-    "goal",
-    new ResourceTemplate("goals://{id}", { list: undefined }),
-    async (uri, variables) => {
-      const id = variables.id as string;
-      const goal = goals.get(id);
-      if (!goal) {
-        throw new Error(`Goal "${id}" not found`);
-      }
+  server.tool(
+    "init-workspace",
+    {
+      name: z.string(),
+    },
+    async ({ name }) => {
+      const workspace = await workspaceManager.updateLastActive(name);
       return {
-        contents: [
+        content: [
           {
-            uri: uri.href,
-            text: goal,
+            type: "text",
+            text: `Workspace "${workspace.name}" initialized`,
           },
         ],
       };
-    }
+    },
   );
+
+  server.resource("workspaces", "workspaces://list", async (uri) => ({
+    contents: [
+      {
+        uri: uri.href,
+        text: workspaceManager
+          .getAll()
+          .map((w) => `${w.name}: ${w.path} (${w.last_active})`)
+          .join("\n"),
+      },
+    ],
+  }));
 
   return server;
 }
