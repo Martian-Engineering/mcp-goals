@@ -6,6 +6,36 @@ import { z } from "zod";
 import { WorkspaceManager } from "./workspace.js";
 import { Tool } from "@modelcontextprotocol/sdk/types.js";
 
+const LEARNINGS_INSTRUCTIONS = `
+  Throughout implementation, maintain a record of learnings. You can create a new learning by calling your create_learning tool from mcp-goals. You should create a new learning whenever you encounter:
+
+  * Design decisions made and their rationale
+  * Steps attempted (both successful and failed) and their outcomes
+  * Architectural decisions and their justification
+  * Useful conventions or configuration details discovered
+  * Any pitfalls encountered and how they were addressed or worked around
+  * Links to relevant documentation or references used
+
+  The content of each entry should be:
+
+  ## [BRIEF TITLE]
+
+  ### Context
+  [What led to this learning/decision]
+
+  ### Details
+  [The main content of the learning/decision]
+
+  ### Rationale
+  [Why this approach was chosen]
+
+  ### Alternatives Considered
+  [What other approaches were considered and why they weren't chosen]
+
+  ### References
+  [Any relevant documentation links or references]
+  `;
+
 export function createServer(workspaceManager: WorkspaceManager): McpServer {
   const server = new McpServer({
     name: "Goals MCP Server",
@@ -44,9 +74,14 @@ export function createServer(workspaceManager: WorkspaceManager): McpServer {
 
   const INIT_WORKSPACE_TOOL: Tool = {
     name: "init-workspace",
-    description: `Initializes or activates an existing workspace.
+    description: `Initializes or activates an existing workspace. You should always call this at the start of a session.
 
-    This updates the workspace's last_active timestamp and ensures it's ready for use. Must be called before performing operations in a workspace.`,
+    Returns:
+      - path: Absolute filesystem path where the workspace contents will be stored.
+      - goals: List of goals with brief descriptions in this workspace.
+      - recent-goal: The goal that was most recently being worked on.
+      - learnings: List of learnings from previous sessions.
+    `,
     inputSchema: {
       type: "object",
       properties: {
@@ -90,7 +125,9 @@ export function createServer(workspaceManager: WorkspaceManager): McpServer {
         content: [
           {
             type: "text",
-            text: `Workspace "${workspace.name}" initialized`,
+            text: `Workspace "${workspace.name}" initialized at ${workspace.path}
+
+            `,
           },
         ],
       };
