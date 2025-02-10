@@ -11,12 +11,14 @@ export interface Workspace {
 
 export interface WorkspaceStore {
   workspaces: Workspace[];
+  active_workspace: string | null;
 }
 
 export class WorkspaceManager {
   private static readonly DEFAULT_DIR = join(homedir(), ".goals");
   private readonly storeDir: string;
   private workspaces: Workspace[] = [];
+  private activeWorkspace: string | null = null;
 
   constructor(storeDir?: string) {
     this.storeDir = storeDir ?? WorkspaceManager.DEFAULT_DIR;
@@ -42,9 +44,11 @@ export class WorkspaceManager {
       const data = await readFile(this.workspacesFile, "utf-8");
       const store: WorkspaceStore = JSON.parse(data);
       this.workspaces = store.workspaces;
+      this.activeWorkspace = store.active_workspace;
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") {
         this.workspaces = [];
+        this.activeWorkspace = null;
         await this.saveWorkspaces();
       } else {
         throw error;
@@ -53,7 +57,10 @@ export class WorkspaceManager {
   }
 
   private async saveWorkspaces(): Promise<void> {
-    const store: WorkspaceStore = { workspaces: this.workspaces };
+    const store: WorkspaceStore = {
+      workspaces: this.workspaces,
+      active_workspace: this.activeWorkspace,
+    };
     await writeFile(this.workspacesFile, JSON.stringify(store, null, 2));
   }
 
@@ -87,7 +94,13 @@ export class WorkspaceManager {
     }
 
     workspace.last_active = new Date().toISOString();
+    this.activeWorkspace = name;
     await this.saveWorkspaces();
     return workspace;
+  }
+
+  getActiveWorkspace(): Workspace | null {
+    if (!this.activeWorkspace) return null;
+    return this.workspaces.find((w) => w.name === this.activeWorkspace) ?? null;
   }
 }

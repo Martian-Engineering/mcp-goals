@@ -1,6 +1,6 @@
 import { join } from "path";
-import { mkdir, readFile, writeFile } from "fs/promises";
-import { existsSync } from "fs";
+import { mkdir, readFile, writeFile, readdir } from "fs/promises";
+import { existsSync, statSync } from "fs";
 
 export interface GoalState {
   active_goal: string | null;
@@ -11,6 +11,7 @@ export interface Goal {
   name: string;
   created_at: string;
   last_updated: string;
+  planPath?: string;
 }
 
 export interface Learning {
@@ -86,7 +87,25 @@ export class GoalManager {
     `;
   }
 
-  async createGoal(name: string): Promise<Goal> {
+  private formatTimestampForFilename(timestamp: string): string {
+    // Replace colons and periods with underscores to make it filesystem-friendly
+    return timestamp.replace(/[:\.]/g, "_");
+  }
+
+  private parseTimestampFromFilename(filename: string): string {
+    // Convert filesystem-friendly format back to ISO timestamp
+    return filename.replace(".md", "").replace(/_/g, (match, index) => {
+      if (index === 13 || index === 16) return ":";
+      if (index === 19) return ".";
+      return match;
+    });
+  }
+
+  static getCurrentTimestamp(): string {
+    return new Date().toISOString();
+  }
+
+  async createGoal(name: string, planContent: string): Promise<Goal> {
     const goalDir = join(this.goalsDir, "goals", name);
     if (existsSync(goalDir)) {
       throw new Error(`Goal "${name}" already exists`);
@@ -94,15 +113,81 @@ export class GoalManager {
 
     await mkdir(goalDir, { recursive: true });
     await mkdir(join(goalDir, "learnings"), { recursive: true });
-    await writeFile(join(goalDir, "plan.md"), "");
+
+    const planPath = join(goalDir, "plan.md");
+    await writeFile(planPath, planContent);
 
     const goal: Goal = {
       name,
       created_at: new Date().toISOString(),
       last_updated: new Date().toISOString(),
+      planPath,
     };
 
     return goal;
+  }
+
+  async getPlan(name: string): Promise<string | null> {
+    const planPath = join(this.goalsDir, "goals", name, "plan.md");
+    if (!existsSync(planPath)) {
+      return null;
+    }
+
+    try {
+      return await readFile(planPath, "utf-8");
+    } catch (error) {
+      return null;
+    }
+  }
+
+  async updatePlan(name: string, planContent: string): Promise<void> {
+    const planPath = join(this.goalsDir, "goals", name, "plan.md");
+    if (!existsSync(planPath)) {
+      throw new Error(`Goal "${name}" does not exist`);
+    }
+
+    await writeFile(planPath, planContent);
+  }
+
+  async getGoalDescription(name: string): Promise<string | null> {
+    const plan = await this.getPlan(name);
+    if (!plan) return null;
+
+    try {
+      const matches = plan.match(/^#\s+(.+?)\n\n(.+?)(?=\n\n|$)/s);
+      if (!matches) return null;
+
+      const [, title, description] = matches;
+      return `${title}\n\n${description}`;
+    } catch (error) {
+      return null;
+    }
+  }
+
+  async listGoals(): Promise<string[]> {
+    const goalsDir = join(this.goalsDir, "goals");
+    if (!existsSync(goalsDir)) {
+      return [];
+    }
+
+    const entries = await readdir(goalsDir);
+    return entries.filter((entry) => {
+      const stat = statSync(join(goalsDir, entry));
+      return stat.isDirectory();
+    });
+  }
+
+  async getGoalSummaries(): Promise<
+    Array<{ name: string; description: string | null }>
+  > {
+    const goals = await this.listGoals();
+    const summaries = await Promise.all(
+      goals.map(async (name) => ({
+        name,
+        description: await this.getGoalDescription(name),
+      })),
+    );
+    return summaries;
   }
 
   async setActiveGoal(name: string): Promise<void> {
@@ -118,87 +203,5 @@ export class GoalManager {
 
   getActiveGoal(): string | null {
     return this.state.active_goal;
-  }
-
-  private formatTimestampForFilename(timestamp: string): string {
-    // Replace colons and periods with underscores to make it filesystem-friendly
-    return timestamp.replace(/[:\.]/g, "_");
-  }
-
-  private parseTimestampFromFilename(filename: string): string {
-    // Convert filesystem-friendly format back to ISO timestamp
-    return filename.replace(".md", "").replace(/_/g, (match, index) => {
-      if (index === 13 || index === 16) return ":";
-      if (index === 19) return ".";
-      return match;
-    });
-  }
-
-  async addLearning(learning: Learning, goalName?: string): Promise<void> {
-    const learningDir = goalName
-      ? join(this.goalsDir, "goals", goalName, "learnings")
-      : join(this.goalsDir, "learnings");
-
-    if (goalName && !existsSync(join(this.goalsDir, "goals", goalName))) {
-      throw new Error(`Goal "${goalName}" does not exist`);
-    }
-
-    if (!existsSync(learningDir)) {
-      await mkdir(learningDir, { recursive: true });
-    }
-
-    const filename = `${this.formatTimestampForFilename(learning.timestamp)}.md`;
-    const filepath = join(learningDir, filename);
-
-    if (existsSync(filepath)) {
-      throw new Error(
-        `Learning for timestamp ${learning.timestamp} already exists`,
-      );
-    }
-
-    await writeFile(filepath, this.formatLearningContent(learning));
-  }
-
-  async getLearnings(
-    goalName?: string,
-  ): Promise<{ timestamp: string; content: string }[]> {
-    const learningDir = goalName
-      ? join(this.goalsDir, "goals", goalName, "learnings")
-      : join(this.goalsDir, "learnings");
-
-    if (!existsSync(learningDir)) {
-      return [];
-    }
-
-    const files = await readFile(learningDir);
-    const learnings = await Promise.all(
-      files
-        .filter((file) => file.endsWith(".md"))
-        .map(async (file) => ({
-          timestamp: this.parseTimestampFromFilename(file),
-          content: await readFile(join(learningDir, file), "utf-8"),
-        })),
-    );
-
-    return learnings.sort((a, b) => b.timestamp.localeCompare(a.timestamp));
-  }
-
-  async getLearning(timestamp: string, goalName?: string): Promise<string> {
-    const learningDir = goalName
-      ? join(this.goalsDir, "goals", goalName, "learnings")
-      : join(this.goalsDir, "learnings");
-
-    const filename = `${this.formatTimestampForFilename(timestamp)}.md`;
-    const filepath = join(learningDir, filename);
-
-    if (!existsSync(filepath)) {
-      throw new Error(`Learning for timestamp ${timestamp} does not exist`);
-    }
-
-    return readFile(filepath, "utf-8");
-  }
-
-  static getCurrentTimestamp(): string {
-    return new Date().toISOString();
   }
 }
